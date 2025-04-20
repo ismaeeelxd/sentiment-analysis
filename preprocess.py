@@ -11,6 +11,9 @@ from pathlib import Path
 nltk.download('punkt_tab')
 nltk.download('punkt')
 nltk.download('stopwords')
+nltk.download('wordnet')
+nltk.download('omw-1.4')
+
 
 stop_words = stopwords.words('english')
 stemmer = PorterStemmer() 
@@ -57,6 +60,7 @@ def tokenizer(text, selected_technique):
 def vectorize_text(reviews, technique):
     def tokenizer_for_vector(text):
         return tokenizer(text,technique)
+    #could use count vectorizer
     vectorizer = TfidfVectorizer(tokenizer=tokenizer_for_vector)
     X = vectorizer.fit_transform(reviews)
     return X
@@ -64,5 +68,5 @@ def vectorize_text(reviews, technique):
 data_path = '.\\data\\raw'
 
 # X is a huge array containing the reviews and Y is a huge array containing the corresponding label
-X,Y = load_reviews(data_path)
-X_vectorized = vectorize_text(X,Tokenizers.STEMMING)
+review_texts,labels = load_reviews(data_path)
+review_texts_vectorized = vectorize_text(review_texts,Tokenizers.STEMMING)
