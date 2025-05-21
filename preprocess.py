@@ -1,16 +1,8 @@
-import os
-import nltk
-import string
+
+import pickle
 import pandas as pd
-import enum
 from sklearn.feature_extraction.text import TfidfVectorizer
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-from nltk.stem import PorterStemmer 
-from nltk.stem import WordNetLemmatizer 
-from pathlib import Path
-from nltk.corpus import wordnet as wn
-from nltk.tag import pos_tag
+from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.svm import LinearSVC
 from sklearn.metrics import accuracy_score
 from sklearn.linear_model import LogisticRegression
@@ -19,105 +11,15 @@ from sklearn.svm import SVC
 import matplotlib.pyplot as plt
 from sklearn import  naive_bayes
 from sklearn.ensemble import RandomForestClassifier
-import random
-from sklearn.model_selection import train_test_split
-# from gensim.models import Word2Vec
 import numpy as np
+
+from helperfun import Tokenizers, load_reviews, my_tokenizer, tokenizer
 # nltk.download('punkt_tab')
 # nltk.download('punkt')
 # nltk.download('stopwords')
 # nltk.download('wordnet')
 # nltk.download('omw-1.4')
 # nltk.download('averaged_perceptron_tagger')
-
-tag_map={
-    'CC':None,
-    'CD':wn.NOUN,
-    'DT':wn.NOUN,
-    'EX':wn.ADV,
-    'FW':None,
-    'IN':wn.ADV,
-    'JJ':wn.ADJ,
-    'JJR':wn.ADJ,
-    'JJS':wn.ADJ,
-    'LS':None,
-    'MD':None,
-    'NN':wn.NOUN,
-    'NNS':wn.NOUN,
-    'NNP':wn.NOUN,
-    'NNPS':wn.NOUN,
-    'PDT':wn.ADJ,
-    'POS':None,
-    'PRP':None,
-    'PRP$':None,
-    'RB':wn.ADV,
-    'RBR':wn.ADV,
-    'RBS':wn.ADV,
-    'RP':wn.ADJ,
-    'SYM':None,
-    'TO':None,
-    'UH':None,
-    'VB':wn.VERB,
-    'VBD':wn.VERB,
-    'VBG':wn.VERB,
-    'VBN':wn.VERB,
-    'VBP':wn.VERB,
-    'VBZ':wn.VERB,
-}
-stop_words = set(stopwords.words('english'))-{'not'}
-stemmer = PorterStemmer() 
-lemmatizer = WordNetLemmatizer() # Create a lemmatizer instance
-
-class Tokenizers(enum.Enum):
-    LEMMATIZATION = 1
-    STEMMING = 2
-
-def load_reviews(data_path):
-    reviews = []
-    labels = []
-    
-    for label_dir, label in [('pos', 1), ('neg', 0)]:
-        folder = Path(data_path) / label_dir
-        for file_path in folder.glob("*.txt"):
-            with open(file_path, encoding="utf-8") as f:
-                text = f.read()
-                reviews.append(text)
-                labels.append(label)
-
-    return reviews, labels
-
-def tokenizer(text, selected_technique):
-    text = text.lower()
-    tokens = word_tokenize(text)
-    tags = pos_tag(tokens)
-
-    processed_tokens = []
-    for token, tag in tags:
-        if token in stop_words or token in string.punctuation:
-            continue
-
-        if selected_technique == Tokenizers.STEMMING:
-            processed = stemmer.stem(token)
-
-        else:  # LEMMATIZATION
-            wn_tag = tag_map.get(tag)                # could be None
-            if wn_tag is not None:
-                processed = lemmatizer.lemmatize(token, pos=wn_tag)
-            else:
-                processed = lemmatizer.lemmatize(token)  # default
-
-        processed_tokens.append(processed)
-
-    return processed_tokens
-
-
-def vectorize_text(reviews, technique):
-    def tokenizer_for_vector(text):
-        return tokenizer(text,technique)
-    #could use count vectorizer
-    vectorizer = TfidfVectorizer(tokenizer=tokenizer_for_vector)
-    X = vectorizer.fit_transform(reviews)
-    return X
 
 data_path = '.\\data\\raw'
 
@@ -127,96 +29,123 @@ print(f"Number of reviews loaded: {len(review_texts)}")
 print(f"Number of positive reviews: {sum(labels)}")
 print(f"Number of negative reviews: {len(labels) - sum(labels)}")
 
-# Vectorize the reviews
-review_texts_vectorized = vectorize_text(review_texts, Tokenizers.LEMMATIZATION)
-print(f"Shape of vectorized reviews: {review_texts_vectorized.shape}")
+# documents = list(zip(review_texts, labels))
+# random.shuffle(documents)
 
+# with open('shuffled_documents.pkl', 'wb') as f:
+#     pickle.dump(documents, f)
 
-documents = list(zip(review_texts, labels))
-random.shuffle(documents)
-
-
+with open('shuffled_documents.pkl', 'rb') as f:
+    documents = pickle.load(f)
 X = [d[0] for d in documents]
 Y = [d[1] for d in documents]
+# X= review_texts
+# Y= labels
+X_Train, X_Test, Y_Train, Y_Test = train_test_split(X, Y, test_size=0.2, random_state=42,stratify=labels          # preserves label balance
+)
 
-X_Train, X_Test, Y_Train, Y_Test = train_test_split(X, Y, test_size=0.2, random_state=42)
 
-vectorizer = TfidfVectorizer(tokenizer=lambda text: tokenizer(text, Tokenizers.LEMMATIZATION))
+
+vectorizer = TfidfVectorizer(
+    tokenizer=my_tokenizer,
+    ngram_range=(1,2),        # unigrams + bigrams
+    min_df=3,   
+    max_df=0.95,               # ignore terms that appear in less than 3 documents
+    analyzer='word',
+    sublinear_tf=True,        # use 1 + log(tf)
+)
 X_Train_vectorized = vectorizer.fit_transform(X_Train)  
+
+with open('tfidf_vectorizer.pkl', 'wb') as f:
+    pickle.dump(vectorizer, f)
+
+print("Vectorizer saved successfully.")
 X_Test_vectorized = vectorizer.transform(X_Test)        
 
+models = {
+    'Linear SVM': LinearSVC(),
+    'SVM (Sigmoid)': SVC(kernel='sigmoid'),
+    'Logistic Regression': LogisticRegression(verbose=0, max_iter=1000),
+    'Naive Bayes': naive_bayes.MultinomialNB(alpha=0.6),
+    'Random Forest': RandomForestClassifier(n_estimators=300, random_state=42,bootstrap=False, max_features='sqrt',),
+   }
 
-# LinearSVC
-linear_svm = LinearSVC()
-
-linear_svm.fit(X_Train_vectorized, Y_Train)
-
-test_predicted_labels = linear_svm.predict(X_Test_vectorized)
-
-linear_svmAccuracy = accuracy_score(Y_Test, test_predicted_labels)
-
-print(f'Linear SVM Accuracy: {linear_svmAccuracy * 100:.2f}%')
-
-# Logistic Regression
-logreg = LogisticRegression()
-
-logreg.fit(X_Train_vectorized, Y_Train)
-
-predicted_labels = logreg.predict(X_Test_vectorized)
-
-LogisticAccuracy = accuracy_score(Y_Test, predicted_labels)
-
-print(f'Logistic Regression accuracy: {LogisticAccuracy * 100:.2f}%')
-# Naive Bayes
-naive_bayes = naive_bayes.MultinomialNB(alpha=0.6)
-
-naive_bayes.fit(X_Train_vectorized, Y_Train)
-
-test_predicted_labels = naive_bayes.predict(X_Test_vectorized)
-
-naive_bayesAccuracy = accuracy_score(Y_Test, test_predicted_labels)
-
-print(f'Naive Bayes Accuracy: {naive_bayesAccuracy * 100:.2f}%')
-
-svm = SVC(kernel='sigmoid')
-
-svm.fit(X_Train_vectorized, Y_Train)
-
-test_predicted_labels = svm.predict(X_Test_vectorized)
-
-svm_SigACC = accuracy_score(Y_Test, test_predicted_labels)
-
-print(f'SVM Accuracy with sigmoid kernel: {svm_SigACC * 100:.2f}%')
-
-# Random Forest
-rf = RandomForestClassifier(n_estimators=100, random_state=42)
-
-rf.fit(X_Train_vectorized, Y_Train)
-
-rf_predicted_labels = rf.predict(X_Test_vectorized)
-
-rfAccuracy = accuracy_score(Y_Test, rf_predicted_labels)
-
-print(f'Random Forest Accuracy: {rfAccuracy * 100:.2f}%')
+accuracies = {}
+train_errors = {}
 
 
-labels = ['Linear SVM','SVM (Sigmoid)', 'Logistic Regression',  'Naive Bayes', 'Random Forest']
-accuracy = [
-    linear_svmAccuracy * 100,
-    svm_SigACC * 100,
-    LogisticAccuracy * 100,
-    naive_bayesAccuracy * 100,
-    rfAccuracy * 100
-]
+for name, model in models.items():
+    model.fit(X_Train_vectorized, Y_Train)
 
-plt.figure(figsize=(10, 6))
-plt.bar(labels, accuracy, color='skyblue', edgecolor='black')
-plt.title('Models Accuracy Comparison')
-plt.xlabel('Model')
-plt.ylabel('Accuracy (%)')
-plt.ylim(0, 100)
-plt.grid(axis='y', linestyle='--', alpha=0.7)
-plt.xticks(rotation=15)
+    test_predictions = model.predict(X_Test_vectorized)
+    test_accuracy = accuracy_score(Y_Test, test_predictions) * 100
+    accuracies[name] = test_accuracy
+
+    train_predictions = model.predict(X_Train_vectorized)
+    train_accuracy = accuracy_score(Y_Train, train_predictions) * 100
+    train_error = 100 - train_accuracy
+    train_errors[name] = train_error
+
+    print(f'{name} Accuracy on Test Set: {test_accuracy:.2f}%')
+    print(f'{name} Accuracy on Train Set: {train_accuracy:.2f}%')
+    print(f'{name} Train Error: {train_error:.2f}%\n')
+print("////////////////////////////////////////////////////////////\n")
+
+mean_accuracies = {}
+from sklearn.model_selection import cross_val_score
+
+for name, model in models.items():
+    scores = cross_val_score(model, X_Train_vectorized, Y_Train, cv=10, scoring='accuracy')
+    mean_accuracy = np.mean(scores) * 100
+    mean_accuracies[name] = mean_accuracy
+    print(f'{name} Cross-Validated Accuracy: {mean_accuracy:.2f}%')
+    
+import seaborn as sns
+
+# Prepare data for plotting
+model_names = list(accuracies.keys())
+test_acc = [accuracies[name] for name in model_names]
+cv_acc = [mean_accuracies[name] for name in model_names]
+
+# Create a DataFrame for visualization
+plot_df = pd.DataFrame({
+    'Model': model_names * 2,
+    'Accuracy': test_acc + cv_acc,
+    'Type': ['Test Accuracy'] * len(model_names) + ['Cross-Validation Accuracy'] * len(model_names)
+})
+
+# Set up the plot
+plt.figure(figsize=(12,6))
+sns.barplot(data=plot_df, x='Model', y='Accuracy', hue='Type', palette='Set2')
+
+# Annotate accuracy values on bars
+for i, row in plot_df.iterrows():
+    plt.text(
+        i % len(model_names),
+        row['Accuracy'] + 0.3,
+        f"{row['Accuracy']:.1f}%",
+        ha='center',
+        fontsize=9
+    )
+
+plt.ylim(70, 100)
+plt.title('Model Accuracy: Test Set vs Cross-Validation')
+plt.xticks(rotation=45)
+plt.ylabel("Accuracy (%)")
+plt.grid(axis='y')
 plt.tight_layout()
 plt.show()
 
+# with open('tfidf_vectorizer.pkl', 'wb') as f:
+#     pickle.dump(vectorizer, f)
+
+# # Save each trained model
+# save_dir = './saved_models'
+# os.makedirs(save_dir, exist_ok=True)
+# for name, model in models.items():
+#     filename = os.path.join(save_dir, f'model_{name.replace(" ", "_").lower()}.pkl')
+#     with open(filename, 'wb') as f:
+#         pickle.dump(model, f)
+#     print(f"Saved model to {filename}")
+
+# print("Models, vectorizer, and CV results saved successfully.")
